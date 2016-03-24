@@ -7,6 +7,7 @@ module.exports = function jasmineNodeTask(grunt) {
     jasmine = require('jasmine-node'),
     merge = require('deepmerge'),
     path = require('path'),
+    fileset = require('fileset'),
     fs = require('fs');
 
   var reportingDir,
@@ -71,6 +72,7 @@ module.exports = function jasmineNodeTask(grunt) {
     var reportFile = path.resolve(reportingDir, options.coverage.reportFile),
       collector = new istanbul.Collector(), // http://gotwarlost.github.io/istanbul/public/apidocs/classes/Collector.html
       cov = global[coverageVar];
+    console.log('#1 global[coverageVar]:', global[coverageVar]);
 
     // important: there is no event loop at this point
     // everything that happens in this exit handler MUST be synchronous
@@ -99,6 +101,8 @@ module.exports = function jasmineNodeTask(grunt) {
   };
 
   var exitHandler = function exitHandler() {
+    console.log('#2 global[coverageVar]:', global[coverageVar]);
+
     if (typeof global[coverageVar] !== 'object' || Object.keys(global[coverageVar]).length === 0) {
       grunt.log.error('No coverage information was collected, exit without writing coverage information');
       return;
@@ -106,7 +110,9 @@ module.exports = function jasmineNodeTask(grunt) {
     collectReports();
   };
 
-  var istanbulMatcherRun = function istanbulMatcherRun(matchFn) {
+  var istanbulMatcherRun = function istanbulMatcherRun(matchFn, includes, excludes) {
+
+    console.log('#3 global[coverageVar]:', global[coverageVar]);
 
     var instrumenter = new istanbul.Instrumenter({coverageVariable: coverageVar}),
       transformer = instrumenter.instrumentSync.bind(instrumenter),
@@ -117,6 +123,39 @@ module.exports = function jasmineNodeTask(grunt) {
     // Hook context to ensure that all requireJS modules get instrumented.
     // Hooking require in isolation does not appear to be sufficient.
     istanbul.hook.hookRunInThisContext(matchFn, transformer, hookOpts);
+
+    //important: there is no event loop at this point
+    //everything that happens in this exit handler MUST be synchronous
+    console.log('include-all-sources:', options.coverage['include-all-sources']);
+    if (options.coverage['include-all-sources']) {
+
+      var cov = global[coverageVar] || {};
+      console.log('#4 global[coverageVar]:', global[coverageVar]);
+      // Files that are not touched by code ran by the test runner is manually instrumented, to
+      // illustrate the missing coverage.
+      console.log('matchFn.files', matchFn.files);
+      console.log('includes:', this.filesSrc);
+      console.log('excludes:', excludes);
+      fileset(this.filesSrc.join(' '), excludes.join(' '), {}, function fileSet(err, files) {
+        console.log('fileset err:', err);
+        console.log('fileset files:', files);
+      });
+      matchFn.files.forEach(function includeAllSources(file) {
+        if (!cov[file]) {
+          transformer(fs.readFileSync(file, 'utf-8'), file);
+
+          // When instrumenting the code, istanbul will give each FunctionDeclaration a value of 1 in coverState.s,
+          // presumably to compensate for function hoisting. We need to reset this, as the function was not hoisted,
+          // as it was never loaded.
+          Object.keys(instrumenter.coverState.s).forEach(function eachKey(key) {
+            instrumenter.coverState.s[key] = 0;
+          });
+
+          cov[file] = instrumenter.coverState;
+        }
+      });
+    }
+
 
     // initialize the global variable to stop mocha from complaining about leaks
     global[coverageVar] = {};
@@ -189,6 +228,7 @@ module.exports = function jasmineNodeTask(grunt) {
     var excludes = options.coverage.excludes || [];
     excludes.push('**/node_modules/**');
 
+    console.log('#1 fileSrc:', fileSrc);
     // http://gotwarlost.github.io/istanbul/public/apidocs/classes/Istanbul.html#method_matcherFor
     istanbul.matcherFor({
       root: options.projectRoot,
@@ -200,7 +240,7 @@ module.exports = function jasmineNodeTask(grunt) {
         grunt.fail.warn(err);
         return;
       }
-      istanbulMatcherRun(matchFn);
+      istanbulMatcherRun(matchFn, fileSrc, excludes);
       runner();
     });
 
@@ -224,6 +264,7 @@ module.exports = function jasmineNodeTask(grunt) {
       // Coverage options
       coverage: { // boolean|object
         reportFile: 'coverage.json',
+        'include-all-sources': true, // boolean, if false, then only files with tests are used in coverage report
         print: 'summary', // none, summary, detail, both
         collect: [ // paths relative to 'reportDir'
           'coverage*.json'
@@ -262,7 +303,13 @@ module.exports = function jasmineNodeTask(grunt) {
 
     options.coverage.report = options.coverage.report || ['lcov'];
 
+    console.log('#2 fileSrc:', fileSrc);
+    console.log('#2 this.filesSrc:', this.filesSrc);
     fileSrc = this.filesSrc || fileSrc;
+    console.log('#3 fileSrc:', fileSrc);
+    console.log('*** this:', this);
+    console.log('*** this.files[0].src:', this.files[0].src);
+    console.log('*** this.files[0].orig:', this.files[0].orig);
 
     // Tell grunt this task is asynchronous.
     done = this.async();

@@ -38,6 +38,7 @@
   ],
   "dependencies": {
     "deepmerge": "~0.2",
+    "fileset": "^0.2.1",
     "istanbul": "~0.4",
     "jasmine-node": ">=1.14.5"
   },
